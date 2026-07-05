@@ -11,7 +11,8 @@
 //
 //   a play-button (▶) is added to the gallery toolbar which starts
 //   a slideshow; the button then turns into a stop-button (⏹) while
-//   the slideshow is running
+//   the slideshow is running, doubling as a countdown-dial which
+//   shows the time until the next file (or video progress)
 //
 //   next to it is an options-button (⚙) which opens a small panel
 //   where you can configure:
@@ -161,7 +162,13 @@
             frac = (Date.now() - arm_t0) / (get_secs() * 1000);
 
         frac = Math.max(0, Math.min(1, frac || 0));
-        btn.style.background = 'conic-gradient(#d48 ' + (frac * 360) + 'deg, #502 0)';
+        btn.style.background = dial_css(frac);
+    }
+
+    // theme accent for the elapsed part, ordinary
+    // gallery-button background for the rest
+    function dial_css(frac) {
+        return 'conic-gradient(var(--a) ' + (frac * 360) + 'deg, rgba(50,50,50,0.5) 0)';
     }
 
     function tick() {
@@ -228,13 +235,11 @@
         btn.setAttribute('tt', msg);
         btn.setAttribute('aria-label', msg);
 
-        // same active-state styling as the other gallery buttons,
-        // but round like a watchface; paint_prog fills in the dial
+        // while running, the button doubles as a countdown-dial
+        // which paint_prog gradually fills with the theme accent
         btn.style.color = running ? '#fff' : '';
-        btn.style.background = running ? 'conic-gradient(#d48 0deg, #502 0)' : '';
-        btn.style.borderRadius = running ? '50%' : '';
-        btn.style.textShadow = running ? '1px 1px 0 #b38' : '';
-        btn.style.boxShadow = running ? '.15em .15em 0 #502' : '';
+        btn.style.background = running ? dial_css(0) : '';
+        btn.style.textShadow = running ? '1px 1px 1px var(--bg-max)' : '';
     }
 
     function build_panel() {
