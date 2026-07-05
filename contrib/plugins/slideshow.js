@@ -14,8 +14,12 @@
 //   the slideshow is running
 //
 //   next to it is an options-button (⚙) which opens a small panel
-//   where you can configure how long each pic/vid stays on screen,
-//   and toggle shuffle-mode (visit files in random order)
+//   where you can configure:
+//     * how long each pic/vid stays on screen
+//     * shuffle-mode (each file once per cycle, in random order)
+//     * whether videos play to the end instead of being cut short
+//     * whether to loop forever or stop after the last file
+//     * whether to enter fullscreen while the slideshow runs
 //
 //   settings are remembered (localStorage)
 
@@ -29,7 +33,10 @@
     // ===
 
     var running = false,
-        tick_timer = null;
+        tick_timer = null,
+        armed_idx = -1,   // the slide the current timer was armed for
+        went_fs = false,  // slideshow entered fullscreen (so undo on stop)
+        bag = null;       // shuffle-mode: upcoming slides this cycle
 
     function get_secs() {
         var v = parseFloat(sread('ss_secs'));
@@ -38,6 +45,18 @@
 
     function get_shuffle() {
         return sread('ss_shuffle') == '1';
+    }
+
+    function get_vidfull() {
+        return sread('ss_vidfull') != '0';
+    }
+
+    function get_loop() {
+        return sread('ss_loop') != '0';
+    }
+
+    function get_fs() {
+        return sread('ss_fs') == '1';
     }
 
     function gallery_open() {
@@ -59,22 +78,71 @@
         return m ? Math.round(Math.abs(parseFloat(m[1])) / 100) : 0;
     }
 
-    function advance() {
-        var n = num_slides();
-        if (n < 2)
-            return;
+    function cur_vid() {
+        var slider = ebi('bbox-slider'),
+            fig = slider && slider.children[cur_slide()];
 
-        var cur = cur_slide(), next;
-        if (get_shuffle()) {
-            // random pick, but never the current one
-            next = Math.floor(Math.random() * (n - 1));
-            if (next >= cur)
-                next++;
+        return fig && fig.querySelector('video');
+    }
+
+    // a shuffled 0..n-1; if `drop`, the file `cur` is removed
+    // (it's on screen already), otherwise it's just kept away
+    // from the first position so cycles don't repeat a file
+    function mkbag(n, cur, drop) {
+        var a = [], i, j, t;
+        for (i = 0; i < n; i++)
+            a.push(i);
+
+        for (i = n - 1; i > 0; i--) {
+            j = Math.floor(Math.random() * (i + 1));
+            t = a[i]; a[i] = a[j]; a[j] = t;
         }
-        else
-            next = (cur + 1) % n;
+
+        i = a.indexOf(cur);
+        if (drop)
+            a.splice(i, 1);
+        else if (!i) {
+            a[0] = a[n - 1];
+            a[n - 1] = cur;
+        }
+        return a;
+    }
+
+    function advance() {
+        var n = num_slides(),
+            cur = cur_slide(),
+            next = -1;
+
+        if (get_shuffle()) {
+            if (bag === null)
+                bag = mkbag(n, cur, true);
+
+            if (!bag.length && get_loop())
+                bag = mkbag(n, cur);
+
+            if (bag.length)
+                next = bag.shift();
+        }
+        else if (cur + 1 < n)
+            next = cur + 1;
+        else if (get_loop() && n > 1)
+            next = 0;
+
+        if (next < 0) {
+            stop();
+            return toast.inf(2, 'slideshow finished');
+        }
 
         baguetteBox.show(next);
+        arm(next);
+    }
+
+    function arm(idx) {
+        // some animation styles update the slider-offset async,
+        // so callers who know the target index pass it explicitly
+        clearTimeout(tick_timer);
+        armed_idx = idx === undefined ? cur_slide() : idx;
+        tick_timer = setTimeout(tick, get_secs() * 1000);
     }
 
     function tick() {
@@ -84,20 +152,42 @@
         if (!gallery_open())
             return stop();
 
+        if (cur_slide() != armed_idx)
+            // someone navigated manually; give the
+            // new slide its full time on screen
+            return arm();
+
+        var v = cur_vid();
+        if (v && get_vidfull() && !v.loop && !v.ended && !v.paused)
+            // video is still playing; check again soon
+            return tick_timer = setTimeout(tick, 500);
+
         advance();
-        tick_timer = setTimeout(tick, get_secs() * 1000);
     }
 
     function start() {
         running = true;
+        bag = null;
         set_btn();
-        tick_timer = setTimeout(tick, get_secs() * 1000);
+
+        if (get_fs() && !document.fullscreenElement) {
+            went_fs = true;
+            try { ebi('bbox-full').click(); } catch (ex) { }
+        }
+
+        arm();
     }
 
     function stop() {
         running = false;
         clearTimeout(tick_timer);
         set_btn();
+
+        if (went_fs) {
+            went_fs = false;
+            if (document.fullscreenElement)
+                try { ebi('bbox-full').click(); } catch (ex) { }
+        }
     }
 
     function toggle(e) {
@@ -134,6 +224,9 @@
             '<h3>slideshow options</h3>' +
             '<label>time per pic/vid: <input type="number" id="bbox-sssecs" min="0.5" step="0.5" style="width:4em" /> sec</label>' +
             '<label><input type="checkbox" id="bbox-ssshuf" /> shuffle</label>' +
+            '<label><input type="checkbox" id="bbox-ssvfull" /> vids: play to end</label>' +
+            '<label><input type="checkbox" id="bbox-ssloop" /> loop forever</label>' +
+            '<label><input type="checkbox" id="bbox-ssfs" /> fullscreen</label>' +
             '<a href="#" id="bbox-ssok" class="btn">close</a>'
         );
         panel.style.cssText = (
@@ -154,26 +247,39 @@
         // panel lives inside the overlay so it stays visible in fullscreen
         ebi('bbox-overlay').appendChild(panel);
 
-        var secs = ebi('bbox-sssecs'),
-            shuf = ebi('bbox-ssshuf');
-
-        secs.value = get_secs();
-        shuf.checked = get_shuffle();
-
-        secs.onchange = function () {
+        ebi('bbox-sssecs').onchange = function () {
             var v = parseFloat(this.value);
             if (isNum(v) && v >= 0.5)
                 swrite('ss_secs', v);
         };
-        shuf.onchange = function () {
+        ebi('bbox-ssshuf').onchange = function () {
             swrite('ss_shuffle', this.checked ? '1' : '0');
+            bag = null;  // order changed; deal a fresh cycle
+        };
+        ebi('bbox-ssvfull').onchange = function () {
+            swrite('ss_vidfull', this.checked ? '1' : '0');
+        };
+        ebi('bbox-ssloop').onchange = function () {
+            swrite('ss_loop', this.checked ? '1' : '0');
+        };
+        ebi('bbox-ssfs').onchange = function () {
+            swrite('ss_fs', this.checked ? '1' : '0');
         };
         ebi('bbox-ssok').onclick = function (e) {
             ev(e);
             panel.style.display = 'none';
         };
 
+        load_panel();
         return panel;
+    }
+
+    function load_panel() {
+        ebi('bbox-sssecs').value = get_secs();
+        ebi('bbox-ssshuf').checked = get_shuffle();
+        ebi('bbox-ssvfull').checked = get_vidfull();
+        ebi('bbox-ssloop').checked = get_loop();
+        ebi('bbox-ssfs').checked = get_fs();
     }
 
     function toggle_panel(e) {
@@ -183,10 +289,8 @@
             show = !existed || panel.style.display == 'none';
 
         panel.style.display = show ? '' : 'none';
-        if (show) {
-            ebi('bbox-sssecs').value = get_secs();
-            ebi('bbox-ssshuf').checked = get_shuffle();
-        }
+        if (show)
+            load_panel();
     }
 
     function inject() {
