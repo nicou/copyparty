@@ -16,6 +16,7 @@ point `--js-browser` to one of these by URL:
 
 * [`minimal-up2k.js`](minimal-up2k.js) is similar to the above `minimal-up2k.html` except it applies globally to all write-only folders
 * [`quickmove.js`](quickmove.js) adds a hotkey to move selected files into a subfolder
+* [`slideshow.js`](slideshow.js) adds a slideshow-button to the image/video gallery, with configurable interval and shuffle-mode
 * [`up2k-hooks.js`](up2k-hooks.js) lets you specify a ruleset for files to skip uploading
   * [`up2k-hook-ytid.js`](up2k-hook-ytid.js) is a more specific example checking youtube-IDs against some API
 
