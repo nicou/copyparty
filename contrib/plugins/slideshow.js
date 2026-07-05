@@ -34,6 +34,8 @@
 
     var running = false,
         tick_timer = null,
+        prog_timer = null,
+        arm_t0 = 0,       // when the current slide got its timer
         armed_idx = -1,   // the slide the current timer was armed for
         went_fs = false,  // slideshow entered fullscreen (so undo on stop)
         bag = null;       // shuffle-mode: upcoming slides this cycle
@@ -142,7 +144,24 @@
         // so callers who know the target index pass it explicitly
         clearTimeout(tick_timer);
         armed_idx = idx === undefined ? cur_slide() : idx;
+        arm_t0 = Date.now();
         tick_timer = setTimeout(tick, get_secs() * 1000);
+    }
+
+    // clock-face countdown in the stop-button background
+    function paint_prog() {
+        var btn = ebi('bbox-ssplay');
+        if (!running || !btn)
+            return;
+
+        var frac, v = cur_vid();
+        if (v && get_vidfull() && !v.loop && !v.ended && !v.paused && v.duration > 0)
+            frac = v.currentTime / v.duration;
+        else
+            frac = (Date.now() - arm_t0) / (get_secs() * 1000);
+
+        frac = Math.max(0, Math.min(1, frac || 0));
+        btn.style.background = 'conic-gradient(#d48 ' + (frac * 360) + 'deg, #502 0)';
     }
 
     function tick() {
@@ -169,6 +188,7 @@
         running = true;
         bag = null;
         set_btn();
+        prog_timer = setInterval(paint_prog, 100);
 
         if (get_fs() && !document.fullscreenElement) {
             went_fs = true;
@@ -181,6 +201,7 @@
     function stop() {
         running = false;
         clearTimeout(tick_timer);
+        clearInterval(prog_timer);
         set_btn();
 
         if (went_fs) {
@@ -207,9 +228,11 @@
         btn.setAttribute('tt', msg);
         btn.setAttribute('aria-label', msg);
 
-        // same active-state styling as the other gallery buttons
+        // same active-state styling as the other gallery buttons,
+        // but round like a watchface; paint_prog fills in the dial
         btn.style.color = running ? '#fff' : '';
-        btn.style.background = running ? '#d48' : '';
+        btn.style.background = running ? 'conic-gradient(#d48 0deg, #502 0)' : '';
+        btn.style.borderRadius = running ? '50%' : '';
         btn.style.textShadow = running ? '1px 1px 0 #b38' : '';
         btn.style.boxShadow = running ? '.15em .15em 0 #502' : '';
     }
@@ -301,6 +324,7 @@
         // the overlay got rebuilt; any running slideshow died with it
         running = false;
         clearTimeout(tick_timer);
+        clearInterval(prog_timer);
 
         var play = mknod('button', 'bbox-ssplay'),
             opts = mknod('button', 'bbox-ssopts');
